@@ -1,0 +1,221 @@
+"""
+llm.py — LangChain chat model backed by an agent CLI subprocess.
+
+One adapter, two backends: get_model("codex") / get_model("bob").
+Auth comes from settings.py; nothing reads os.environ directly.
+
+Parsers live in parsers.py; generic helpers in utilities.py.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Any, Callable, Sequence
+
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable
+from pydantic import BaseModel
+
+from parsers import parse_bob, parse_codex
+from settings import settings
+from utilities import maybe_home, scrub
+
+
+# --------------------------------------------------------------------------
+# CLI specs
+# --------------------------------------------------------------------------
+
+class ShellSpec(BaseModel):
+    """How to invoke one agent CLI headlessly."""
+    name: str
+    argv: list[str]
+    env_key: str            # var name the CLI reads
+    secret_attr: str        # attribute on Settings holding the key
+    parse: Callable[[str], str]
+    prompt_via: str = "stdin"   # "stdin" | "argv"
+    isolate_home: bool = False  # fresh HOME/CODEX_HOME per call
+
+    model_config = {"arbitrary_types_allowed": True}
+
+
+# Built per call, not at import: reading settings() at module scope would make
+# importing this module fail whenever config is absent or invalid.
+def build_specs() -> dict[str, ShellSpec]:
+    return {
+        "codex": ShellSpec(
+            name="codex",
+            argv=[
+                "codex",
+                "exec",
+                "--model",
+                f"{settings().llm_model_name}",
+            ],
+            env_key="CODEX_API_KEY",
+            secret_attr="codex_api_key",
+            parse=parse_codex,
+            prompt_via="argv",
+            # openai/codex#11435: parallel `codex exec` instances interfere via
+            # shared session restore. Isolating HOME sidesteps it — but a fresh
+            # CODEX_HOME has no auth.json, so this only works if the CLI accepts
+            # CODEX_API_KEY standalone. Flip to False if auth fails.
+            isolate_home=False,
+        ),
+        "bob": ShellSpec(
+            name="bob",
+            argv=["bob", "--output-format", "stream-json",
+                  "--chat-mode", "ask", "--approval-mode", "default",
+                  "--max-coins", "30"],
+            env_key="BOBSHELL_API_KEY",
+            secret_attr="bobshell_api_key",
+            parse=parse_bob,
+            prompt_via="stdin",
+        ),
+    }
+
+
+CLI_NAMES = ("codex", "bob")
+
+
+# --------------------------------------------------------------------------
+# Message flattening
+# --------------------------------------------------------------------------
+
+class CLIError(RuntimeError):
+    pass
+
+
+def _text(m: BaseMessage) -> str:
+    if isinstance(m.content, str):
+        return m.content
+    if isinstance(m.content, list):
+        return "".join(p.get("text", "") for p in m.content
+                       if isinstance(p, dict))
+    return str(m.content)
+
+
+def _render(messages: Sequence[BaseMessage]) -> str:
+    """Flatten to one prompt — CLI invocations are stateless."""
+    roles = {"system": "SYSTEM", "human": "USER", "ai": "ASSISTANT"}
+    return "\n\n".join(
+        f"{roles.get(m.type, m.type.upper())}:\n{_text(m)}" for m in messages)
+
+
+# --------------------------------------------------------------------------
+# The model
+# --------------------------------------------------------------------------
+
+class ShellChatModel(BaseChatModel):
+    """Chat model that shells out to an agent CLI.
+
+    Limitations, stated rather than papered over:
+      - no native tool calling  -> bind_tools raises; drive tools from Python
+      - no token usage reported -> budget on call count / wall-clock
+      - stateless per call      -> full history re-sent every invocation
+    """
+
+    spec: ShellSpec
+    timeout: int = 300
+    cwd: str | None = None
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    @property
+    def _llm_type(self) -> str:
+        return f"shell:{self.spec.name}"
+
+    @property
+    def _identifying_params(self) -> dict[str, Any]:
+        return {"cli": self.spec.name, "argv": self.spec.argv}
+
+    # -- process setup -----------------------------------------------------
+
+    def _child_env(self, home: str | None) -> dict[str, str]:
+        key = getattr(settings(), self.spec.secret_attr)
+        if not key:
+            raise CLIError(
+                f"no API key for {self.spec.name}: "
+                f"Settings.{self.spec.secret_attr} is unset")
+        # Allowlist, not os.environ.copy() — the codex process never sees the
+        # bob key and vice versa.
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": home or os.environ.get("HOME", tempfile.gettempdir()),
+            self.spec.env_key: key,
+        }
+        for k in ("LANG", "TMPDIR", "NODE_PATH", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"):
+            if k in os.environ:
+                env[k] = os.environ[k]
+        if home and self.spec.name == "codex":
+            env["CODEX_HOME"] = str(Path(home) / ".codex")
+        return env
+
+    def _invocation(self, messages: list[BaseMessage]) -> tuple[list[str], str | None]:
+        """Returns (argv, stdin_payload)."""
+        prompt = _render(messages)
+        if self.spec.prompt_via == "argv":
+            return [*self.spec.argv, prompt], None
+        return list(self.spec.argv), prompt
+
+    # -- sync --------------------------------------------------------------
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        argv, stdin = self._invocation(messages)
+        with maybe_home(self.spec.isolate_home) as home:
+            proc = subprocess.run(
+                argv, input=stdin, capture_output=True, text=True,
+                timeout=self.timeout, env=self._child_env(home), cwd=self.cwd)
+        return self._to_result(proc.returncode, proc.stdout, proc.stderr, argv)
+
+    # -- async (required: blocking subprocess serialises any fan-out) -------
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        argv, stdin = self._invocation(messages)
+        with maybe_home(self.spec.isolate_home) as home:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE if stdin else asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self._child_env(home), cwd=self.cwd)
+            try:
+                out, err = await asyncio.wait_for(
+                    proc.communicate(stdin.encode() if stdin else None),
+                    timeout=self.timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                raise CLIError(f"{self.spec.name} timed out after {self.timeout}s")
+        return self._to_result(proc.returncode, out.decode(), err.decode(), argv)
+
+    # -- shared ------------------------------------------------------------
+
+    def _to_result(self, rc: int, stdout: str, stderr: str, argv: list[str]) -> ChatResult:
+        if rc != 0:
+            raise CLIError(
+                f"{self.spec.name} exited {rc}\n"
+                f"argv: {argv[:4]}...\n"
+                f"--- stderr ---\n{scrub(stderr)[:1500]}\n"
+                f"--- stdout ---\n{scrub(stdout)[:1500]}")
+        text = self.spec.parse(stdout)
+        if not text:
+            raise CLIError(
+                f"{self.spec.name} exited 0 but produced no parseable output.\n"
+                f"--- stdout ---\n{scrub(stdout)[:1500]}\n"
+                f"--- stderr ---\n{scrub(stderr)[:500]}")
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
+
+    def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> Runnable:
+        raise NotImplementedError(
+            f"{self._llm_type} has no native tool calling — run the tool loop "
+            "in Python and feed results back as messages.")
+
+
+def get_model(cli: str, **kwargs: Any) -> ShellChatModel:
+    if cli not in CLI_NAMES:
+        raise ValueError(f"unknown CLI {cli!r}; have {sorted(CLI_NAMES)}")
+    return ShellChatModel(spec=build_specs()[cli], **kwargs)
