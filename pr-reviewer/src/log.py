@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 
-from .utilities import scrub
+from utilities import scrub
 
 _CONFIGURED = False
 _DEFAULT_FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"

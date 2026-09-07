@@ -1,0 +1,38 @@
+name: PR Review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The diff is taken against origin/<target>, so the merge base has to
+          # be present. The default shallow clone does not have it.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the reviewer
+        working-directory: pr-reviewer/src
+        env:
+          # settings.py still reads the GitLab-style names for the branches.
+          CI_COMMIT_BRANCH: ${{ github.head_ref }}
+          CI_MERGE_REQUEST_TARGET_BRANCH_NAME: ${{ github.base_ref }}
+
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+          MAX_REVIEWS_PER_PR: "1"
+        run: python main.py
