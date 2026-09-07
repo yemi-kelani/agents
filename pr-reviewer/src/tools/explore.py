@@ -14,7 +14,7 @@ from llm import get_model
 from log import get_logger
 from prompts import load
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 # A sub-agent question should be answerable quickly; the default 300s is a
 # budget for a whole task, and the outer loop can afford several of these.

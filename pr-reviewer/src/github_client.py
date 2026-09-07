@@ -10,10 +10,13 @@ import json
 import urllib.request
 from dataclasses import dataclass
 
-from settings import settings
-
 API_ROOT = "https://api.github.com"
 PER_PAGE = 100
+
+# urlopen has no timeout by default, so a hung connection would block until the
+# CI job itself is killed — and the pagination loop below gives it several
+# chances to happen.
+TIMEOUT_SECONDS = 30
 
 # An HTML comment: present in the raw review body the API returns, invisible in
 # the markdown GitHub renders. This is how a later run recognizes our own work.
@@ -45,27 +48,46 @@ def _request(method: str, url: str, token: str, payload=None):
             "User-Agent": "pr-reviewer",
         },
     )
-    with urllib.request.urlopen(req) as response:
+    with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as response:
         body = response.read()
-    return json.loads(body) if body else {}
+    return json.loads(body) if body else None
 
 
 def _reviews_url(pr: PullRequest) -> str:
     return f"{API_ROOT}/repos/{pr.repository}/pulls/{pr.number}/reviews"
 
 
-def count_agent_reviews(pr: PullRequest, request=_request) -> int:
-    """How many reviews on `pr` this agent has already posted."""
+def count_agent_reviews(pr: PullRequest, token: str, request=_request) -> int:
+    """How many reviews on `pr` this agent has already posted.
+
+    Raises `GitHubError` rather than guessing when the answer cannot be
+    established. The caller treats "unknown" as a reason to stay quiet, so
+    reporting a wrong zero here would let the agent post duplicate reviews.
+    """
     count = 0
     page = 1
     while True:
         url = f"{_reviews_url(pr)}?per_page={PER_PAGE}&page={page}"
         try:
-            reviews = request("GET", url, settings().github_token, None)
+            reviews = request("GET", url, token, None)
+
+            # An unexpected body must not be read as "no previous reviews". This
+            # sits inside the try so a malformed response raises GitHubError like
+            # any other failure, rather than an AttributeError that would bypass
+            # the caller's handling entirely.
+            if not isinstance(reviews, list):
+                raise GitHubError(
+                    f"Expected a list of reviews for {pr.repository}#{pr.number}, "
+                    f"got {type(reviews).__name__}")
+
+            count += sum(
+                1 for review in reviews
+                if isinstance(review, dict) and MARKER in (review.get("body") or ""))
+        except GitHubError:
+            raise
         except Exception as exc:  # urllib raises a wide family of errors
             raise GitHubError(f"Could not list reviews for {pr.repository}#{pr.number}") from exc
 
-        count += sum(1 for review in reviews if MARKER in (review.get("body") or ""))
         if len(reviews) < PER_PAGE:
             return count
         page += 1

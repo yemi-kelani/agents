@@ -1,0 +1,14 @@
+# Pinned: langgraph and langchain-core make breaking changes across minor
+# versions, and this runs unattended in CI.
+#
+# `python-dotenv` provides the `dotenv` module that settings.py imports. Do not
+# add the separate PyPI package literally named `dotenv` — it is a different,
+# unrelated project.
+langgraph==1.2.11
+langchain-core==1.6.2
+pydantic==2.13.5
+python-dotenv==1.2.3
+
+# Async tests drive coroutines through asyncio.run() directly, so no
+# pytest-asyncio plugin is needed.
+pytest==9.1.1

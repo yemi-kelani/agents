@@ -9,6 +9,7 @@ Mechanism, not a node: a node picks the task and the tools, this runs the turns.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
 from typing import Awaitable, Callable
@@ -20,7 +21,7 @@ from parsers import parse_tool_step
 from prompts import load
 from utilities import trim_text
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 Tool = Callable[..., Awaitable[str]]
 
@@ -61,6 +62,21 @@ async def _call(tools: dict[str, Tool], step: dict) -> str:
         return f"{name} failed: {exc}"
 
 
+def _last_answer(history: list[tuple[str, str]]) -> str:
+    """The most recent thing the model said, for when the loop runs out of time.
+
+    Prefers a tool result over a bare tool call: the result is information the
+    review can use, whereas the call is just a request the loop never served.
+    """
+    for role, content in reversed(history):
+        if role == "human" and content.startswith("TOOL RESULT:"):
+            return content[len("TOOL RESULT:"):].strip()
+    for role, content in reversed(history):
+        if role == "ai":
+            return content.strip()
+    return "The review ran out of time before reaching an answer."
+
+
 async def run_tool_loop(
     model: BaseChatModel,
     tools: dict[str, Tool],
@@ -80,12 +96,31 @@ async def run_tool_loop(
     ]
     deadline = time.monotonic() + max_seconds
 
+    async def ask() -> str:
+        """One model turn, bounded by whatever remains of the budget.
+
+        Checking the clock between steps is not enough to enforce `max_seconds`:
+        a step already in flight runs to the model's own timeout, so six steps
+        could take several times the budget. Bounding the await is what makes the
+        limit real.
+        """
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise asyncio.TimeoutError
+        return str((await asyncio.wait_for(model.ainvoke(history), timeout=remaining)).content)
+
     for step_number in range(1, max_steps + 1):
         last_step = step_number == max_steps or time.monotonic() >= deadline
         if last_step:
             history.append(("human", "No steps remain. Answer now with what you have, as {\"answer\": \"...\"}."))
 
-        raw = str((await model.ainvoke(history)).content)
+        try:
+            raw = await ask()
+        except asyncio.TimeoutError:
+            # Out of time. The exploration so far is worth more than an
+            # exception, so fall back to the last thing the model said.
+            logger.warning(f"Ran out of time at step {step_number}; using what we have")
+            return _last_answer(history)
 
         try:
             step = parse_tool_step(raw)
@@ -114,7 +149,11 @@ async def run_tool_loop(
                 ("ai", raw),
                 ("human", "There is no budget to run that tool. Answer now, in plain prose, using what you already know."),
             ]
-            final = str((await model.ainvoke(history)).content).strip()
+            try:
+                final = (await ask()).strip()
+            except asyncio.TimeoutError:
+                logger.warning("Ran out of time asking for a final answer")
+                return _last_answer(history)
             try:
                 return str(parse_tool_step(final).get("answer", final)).strip()
             except ValueError:

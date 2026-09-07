@@ -1,4 +1,3 @@
-from log import get_logger
 from utilities import parse_int
 
 import os
@@ -7,7 +6,6 @@ from dotenv import load_dotenv
 from dataclasses import dataclass
 
 load_dotenv()
-logger = get_logger()
 
 _PULL_REF = re.compile(r"^refs/pull/(\d+)/")
 
@@ -16,7 +14,11 @@ class Settings:
     # git
     branch: str | None = None
     target_branch: str | None = None
-    
+    # The commits to diff. Preferred over the branch names, which cannot be
+    # resolved for a pull request opened from a fork.
+    base_sha: str | None = None
+    head_sha: str | None = None
+
     # model
     anthropic_api_key: str | None = None
     bobshell_api_key: str | None = None
@@ -56,9 +58,16 @@ def settings() -> Settings:
     error instead of the obvious "you have no key".
     """
     return Settings(
-        # git
-        branch=(os.getenv("CI_COMMIT_BRANCH") or None),
-        target_branch=(os.getenv("CI_MERGE_REQUEST_TARGET_BRANCH_NAME") or None),
+        # git — GitHub's own variables first, the GitLab names as a fallback, the
+        # same shape `_pr_number` uses for the PR number.
+        branch=(os.getenv("GITHUB_HEAD_REF") or os.getenv("CI_COMMIT_BRANCH") or None),
+        target_branch=(
+            os.getenv("GITHUB_BASE_REF")
+            or os.getenv("CI_MERGE_REQUEST_TARGET_BRANCH_NAME")
+            or None
+        ),
+        base_sha=os.getenv("BASE_SHA") or None,
+        head_sha=os.getenv("HEAD_SHA") or None,
         # model
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
         bobshell_api_key=os.getenv("BOBSHELL_API_KEY") or None,

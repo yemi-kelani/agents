@@ -4,25 +4,69 @@ import json
 import re
 
 
+# Item types that carry CLI diagnostics rather than anything the agent said.
+_NON_ANSWER_ITEMS = {"error", "reasoning", "todo_list", "command_execution"}
+
+
 def parse_codex(stdout: str) -> str:
-    """`codex exec --json` emits JSON lines; keep the last agent message."""
-    last = ""
+    """Recover the agent's final message from a `codex exec --json` event stream.
+
+    Only a fallback: the answer is normally read from the file named by
+    `--output-last-message`, which needs no parsing at all. This exists for when
+    that file is missing or empty.
+
+    The stream is typed events, not flat records::
+
+        {"type": "thread.started", "thread_id": "..."}
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "..."}}
+        {"type": "error", "message": "..."}
+        {"type": "turn.failed", "error": {"message": "..."}}
+
+    A top-level `message` therefore belongs to an *error* event, never to the
+    agent. Reading one as the answer would report a CLI failure as if it were the
+    review, so answers are only ever taken from the `item` payload of an
+    `item.completed` event.
+    """
+    answers: list[str] = []
+    plain: list[str] = []
+
     for line in stdout.splitlines():
         line = line.strip()
         if not line:
             continue
+
         try:
-            obj = json.loads(line)
+            event = json.loads(line)
         except json.JSONDecodeError:
-            last = line
+            # Not JSON at all — the CLI was run without `--json`, or printed a
+            # banner. Accumulate: overwriting here would silently reduce a whole
+            # review to its last line.
+            plain.append(line)
             continue
-        if not isinstance(obj, dict):
-            last = line
+
+        if not isinstance(event, dict):
+            plain.append(line)
             continue
-        for key in ("last_agent_message", "message", "result", "text"):
-            if isinstance(obj.get(key), str):
-                last = obj[key]
-    return last or stdout.strip()
+
+        if event.get("type") != "item.completed":
+            continue
+
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") in _NON_ANSWER_ITEMS:
+            continue
+
+        # Field name varies by item type, so take whichever string is present
+        # rather than hard-coding one the schema may not use.
+        for key in ("text", "message", "content"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                answers.append(value)
+                break
+
+    if answers:
+        # The agent may emit several messages in a turn; the last is its answer.
+        return answers[-1].strip()
+    return "\n".join(plain).strip()
 
 
 _FENCE = re.compile(r"^\s*```(?:json)?|```\s*$", re.MULTILINE)

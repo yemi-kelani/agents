@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from parsers import parse_bob, parse_codex
 from settings import settings
-from utilities import maybe_home, scrub
+from utilities import maybe_answer_file, maybe_home, read_text_if_any, scrub
 
 
 # --------------------------------------------------------------------------
@@ -40,6 +40,10 @@ class ShellSpec(BaseModel):
     parse: Callable[[str], str]
     prompt_via: str = "stdin"   # "stdin" | "argv"
     isolate_home: bool = False  # fresh HOME/CODEX_HOME per call
+    # Flag the CLI accepts for "write your final message to this file". When set,
+    # that file is the answer and `parse` is only a fallback. Reading a file the
+    # CLI wrote beats parsing an event stream whose schema can change.
+    answer_file_flag: str | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -53,6 +57,9 @@ def build_specs() -> dict[str, ShellSpec]:
             argv=[
                 "codex",
                 "exec",
+                # Structured events, so a failure is machine-readable rather than
+                # prose. The answer itself comes from --output-last-message.
+                "--json",
                 "--model",
                 f"{settings().llm_model_name}",
             ],
@@ -60,6 +67,7 @@ def build_specs() -> dict[str, ShellSpec]:
             secret_attr="codex_api_key",
             parse=parse_codex,
             prompt_via="argv",
+            answer_file_flag="--output-last-message",
             # openai/codex#11435: parallel `codex exec` instances interfere via
             # shared session restore. Isolating HOME sidesteps it — but a fresh
             # CODEX_HOME has no auth.json, so this only works if the CLI accepts
@@ -155,53 +163,94 @@ class ShellChatModel(BaseChatModel):
             env["CODEX_HOME"] = str(Path(home) / ".codex")
         return env
 
-    def _invocation(self, messages: list[BaseMessage]) -> tuple[list[str], str | None]:
+    def _invocation(
+        self, messages: list[BaseMessage], answer_path: Path | None
+    ) -> tuple[list[str], str | None]:
         """Returns (argv, stdin_payload)."""
+        argv = list(self.spec.argv)
+        if answer_path is not None and self.spec.answer_file_flag:
+            argv += [self.spec.answer_file_flag, str(answer_path)]
+
         prompt = _render(messages)
         if self.spec.prompt_via == "argv":
-            return [*self.spec.argv, prompt], None
-        return list(self.spec.argv), prompt
+            return [*argv, prompt], None
+        return argv, prompt
 
     # -- sync --------------------------------------------------------------
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
-        argv, stdin = self._invocation(messages)
-        with maybe_home(self.spec.isolate_home) as home:
-            proc = subprocess.run(
-                argv, input=stdin, capture_output=True, text=True,
-                timeout=self.timeout, env=self._child_env(home), cwd=self.cwd)
-        return self._to_result(proc.returncode, proc.stdout, proc.stderr, argv)
+        with (maybe_home(self.spec.isolate_home) as home,
+              maybe_answer_file(bool(self.spec.answer_file_flag)) as answer_path):
+            argv, stdin = self._invocation(messages, answer_path)
+            try:
+                proc = subprocess.run(
+                    argv,
+                    # Without this the child inherits our stdin; the codex CLI
+                    # reads stdin even when the prompt came in on argv, and would
+                    # block waiting for EOF.
+                    input=stdin if stdin is not None else "",
+                    capture_output=True, text=True,
+                    timeout=self.timeout, env=self._child_env(home), cwd=self.cwd)
+            except FileNotFoundError as exc:
+                raise self._not_installed(argv) from exc
+            except subprocess.TimeoutExpired as exc:
+                raise CLIError(f"{self.spec.name} timed out after {self.timeout}s") from exc
+            return self._to_result(
+                proc.returncode, proc.stdout, proc.stderr, argv, answer_path)
 
     # -- async (required: blocking subprocess serialises any fan-out) -------
 
     async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
-        argv, stdin = self._invocation(messages)
-        with maybe_home(self.spec.isolate_home) as home:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE if stdin else asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=self._child_env(home), cwd=self.cwd)
+        with (maybe_home(self.spec.isolate_home) as home,
+              maybe_answer_file(bool(self.spec.answer_file_flag)) as answer_path):
+            argv, stdin = self._invocation(messages, answer_path)
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.PIPE if stdin else asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=self._child_env(home), cwd=self.cwd)
+            except FileNotFoundError as exc:
+                raise self._not_installed(argv) from exc
+
             try:
                 out, err = await asyncio.wait_for(
                     proc.communicate(stdin.encode() if stdin else None),
                     timeout=self.timeout)
             except asyncio.TimeoutError:
                 proc.kill()
+                # Reap it. Without this the loop warns that the child is still
+                # running, and the temporary directories above can be removed
+                # while it still holds files inside them.
+                await proc.wait()
                 raise CLIError(f"{self.spec.name} timed out after {self.timeout}s")
-        return self._to_result(proc.returncode, out.decode(), err.decode(), argv)
+
+            return self._to_result(
+                proc.returncode, out.decode(errors="replace"),
+                err.decode(errors="replace"), argv, answer_path)
 
     # -- shared ------------------------------------------------------------
 
-    def _to_result(self, rc: int, stdout: str, stderr: str, argv: list[str]) -> ChatResult:
+    def _not_installed(self, argv: list[str]) -> CLIError:
+        """The CLI is missing from PATH — a setup fault, not a model failure."""
+        return CLIError(
+            f"{self.spec.name} is not installed or not on PATH (tried {argv[0]!r}). "
+            f"Install the {self.spec.name} CLI before running the reviewer.")
+
+    def _to_result(self, rc: int | None, stdout: str, stderr: str,
+                   argv: list[str], answer_path: Path | None = None) -> ChatResult:
         if rc != 0:
             raise CLIError(
                 f"{self.spec.name} exited {rc}\n"
                 f"argv: {argv[:4]}...\n"
                 f"--- stderr ---\n{scrub(stderr)[:1500]}\n"
                 f"--- stdout ---\n{scrub(stdout)[:1500]}")
-        text = self.spec.parse(stdout)
+
+        # The file the CLI wrote is authoritative; parsing stdout is the fallback
+        # for when it is absent, and cannot be trusted to distinguish the agent's
+        # answer from the CLI's own diagnostics.
+        text = read_text_if_any(answer_path) or self.spec.parse(stdout)
         if not text:
             raise CLIError(
                 f"{self.spec.name} exited 0 but produced no parseable output.\n"

@@ -10,11 +10,14 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
+    # Backstop: the reviewer bounds its own model calls and HTTP, but a job-level
+    # limit is what guarantees a hung run cannot hold a runner for six hours.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          # The diff is taken against origin/<target>, so the merge base has to
-          # be present. The default shallow clone does not have it.
+          # The diff is taken between the base and head SHAs, so both commits
+          # have to be present. The default shallow clone does not have them.
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -24,12 +27,24 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install the codex CLI
+        # A hard dependency: llm.py shells out to `codex`, which is not present
+        # on the runner image. Pinned so a CLI release cannot change the output
+        # contract underneath us.
+        run: npm install -g @openai/codex@0.153.4
+
       - name: Run the reviewer
         working-directory: pr-reviewer/src
         env:
-          # settings.py still reads the GitLab-style names for the branches.
-          CI_COMMIT_BRANCH: ${{ github.head_ref }}
-          CI_MERGE_REQUEST_TARGET_BRANCH_NAME: ${{ github.base_ref }}
+          # Diffing by SHA rather than by `origin/<branch>` is what makes fork
+          # pull requests reviewable: a fork's head branch has no ref under
+          # `origin`, but its head commit is fetched and present.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+          # Branch names are used for logging and for the review body. Actions
+          # sets GITHUB_HEAD_REF/GITHUB_BASE_REF itself on a pull_request event,
+          # so nothing needs mapping by hand.
 
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

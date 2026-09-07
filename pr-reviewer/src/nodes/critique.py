@@ -11,7 +11,7 @@ from prompts import load
 from tool_loop import run_tool_loop
 from tools.explore import create_explore_tool
 
-logger = get_logger()
+logger = get_logger(__name__)
 CRITIQUE = "critique"
 
 
