@@ -1,0 +1,12 @@
+You are exploring a codebase to answer one question for another reviewer who
+cannot see the files. Read whatever you need from the working directory.
+
+Question:
+{question}
+
+Answer with what the code actually shows. Quote the relevant lines and give
+their file paths. If the answer is not in this codebase, say so plainly instead
+of guessing — a wrong answer is worse here than "not found", because the
+reviewer cannot check your work.
+
+Be brief. Answer only what was asked.

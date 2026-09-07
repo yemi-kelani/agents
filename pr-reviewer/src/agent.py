@@ -1,21 +1,21 @@
 from github_client import GitHubError, PullRequest, count_agent_reviews
 from llm import get_model
 from log import get_logger
+from models import Critique
 from settings import settings
+from nodes.critique import CRITIQUE, create_critique_node
 from nodes.diff_analyzer import DIFF_ANALYZER, create_diff_analyzer_node
 
 from typing import Annotated, List, TypedDict
 
 from operator import add
-from pydantic import BaseModel
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.graph.state import StateGraph, START, END, CompiledStateGraph
 
 logger = get_logger()
 
-class Critique(BaseModel):
-    pass
 
 class State(TypedDict):
     messages: Annotated[List, add_messages]
@@ -30,7 +30,11 @@ class State(TypedDict):
 
 class Agent:
     
-    def __init__(self, cli: str):
+    def __init__(self, cli: str, repo_path: str):
+        self.cli = cli
+        # The sub-agent that explores the codebase needs an explicit directory;
+        # ShellChatModel.cwd is None by default.
+        self.repo_path = repo_path
         self.llm = get_model(cli=cli)
         
     def should_review(self, state: State):
@@ -81,6 +85,12 @@ class Agent:
         workflow.add_conditional_edges(source=START, path=self.should_review)
         
         workflow.add_node(DIFF_ANALYZER, create_diff_analyzer_node(llm=self.llm))
-        
-        
+        workflow.add_node(
+            CRITIQUE,
+            create_critique_node(llm=self.llm, cli=self.cli, repo_path=self.repo_path),
+        )
+
+        workflow.add_edge(DIFF_ANALYZER, CRITIQUE)
+        workflow.add_edge(CRITIQUE, END)
+
         return workflow.compile(checkpointer=InMemorySaver())

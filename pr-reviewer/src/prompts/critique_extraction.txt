@@ -1,0 +1,18 @@
+Below is a code review written as prose. Rewrite it in the required format,
+changing nothing about the findings themselves — do not add, merge, drop or
+soften any of them.
+
+For each finding, on its own lines:
+
+  FILE: <path>
+  LINE: <line number, or "unknown">
+  SEVERITY: <high | medium | low>
+  ISSUE: <one sentence naming the problem>
+  DETAIL: <what breaks and under what conditions>
+
+If a field is not stated in the review, write "unknown" rather than inferring
+one. If the review reports no problems, output nothing at all.
+
+--- REVIEW ---
+{review}
+--- END REVIEW ---

@@ -1,0 +1,23 @@
+You are reviewing a pull request. Below is a summary of its diff.
+
+{diff_summary}
+
+The summary describes the change, but not the code around it. Before judging,
+use your tool to find out what you cannot see: what calls the changed code, what
+the function looked like before, what conventions the surrounding code follows,
+whether an edge case is handled elsewhere.
+
+Report only real problems: a bug, a case that breaks, an error swallowed, an
+invariant broken, a contract changed for existing callers. Do not report style
+preferences, and do not invent findings to fill space — "no problems found" is a
+valid answer for a clean change.
+
+Give your final answer as a list of findings. For each one, on its own lines:
+
+  FILE: <path>
+  LINE: <line number, or "unknown">
+  SEVERITY: <high | medium | low>
+  ISSUE: <one sentence naming the problem>
+  DETAIL: <what breaks, under what conditions, and why it follows from the code>
+
+Nothing else — no preamble, no summary at the end.

@@ -1,0 +1,20 @@
+You are reviewing one segment of a larger unified diff. Summarize only what this
+segment shows. Another pass will combine your summary with the others, so do not
+speculate about code you cannot see here.
+
+Segment {index} of {total}.
+
+For each file touched in this segment, report:
+  - the path, and whether it is added, deleted, renamed or modified
+  - what changed in substance: behavior, interfaces, data flow, error handling
+  - anything a reviewer would want to look at closely, and why
+
+Be specific and cite identifiers from the diff. Say "unclear from this segment"
+rather than guessing. Segments overlap, so you may see lines that also appear in
+a neighbouring segment; summarize them normally.
+
+Write prose under short per-file headings. No preamble, no closing summary.
+
+--- BEGIN SEGMENT ---
+{segment}
+--- END SEGMENT ---

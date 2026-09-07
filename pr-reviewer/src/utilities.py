@@ -5,6 +5,8 @@ import logging
 import re
 import tempfile
 from typing import Iterator
+from langchain_core.messages import HumanMessage
+from langchain_core.messages.utils import count_tokens_approximately
 
 # `log` imports `scrub` from here, so this module takes the stdlib logger
 # directly rather than `log.get_logger` — importing back would be a cycle.
@@ -55,3 +57,35 @@ def maybe_home(isolate: bool) -> Iterator[str | None]:
         return
     with tempfile.TemporaryDirectory(prefix="cli-home-") as d:
         yield d
+        
+def token_count(s: str) -> int:
+    return count_tokens_approximately([HumanMessage(content=s)])
+
+
+def trim_text(text: str, max_tokens: int = 50_000) -> tuple[str, str]:
+    """Split `text` into the longest prefix within `max_tokens`, and the remainder.
+
+    Token counting is approximate but monotonic in length, so a binary search on
+    the split point finds the longest fitting prefix without counting every
+    candidate.
+    """
+    s = text
+
+    if not isinstance(text, str):
+        logger.warning(f"'trim_text' method recieved text input with type '{type(text)}' instead of str.")
+        s = str(text)
+
+    len_text: int = len(s)
+    if len_text == 0 or token_count(s) <= max_tokens:
+        return s, ""
+
+    # Invariant: `low` always fits, `high` never does.
+    low, high = 0, len_text
+    while high - low > 1:
+        mid = (low + high) // 2
+        if token_count(s[:mid]) <= max_tokens:
+            low = mid
+        else:
+            high = mid
+
+    return s[:low], s[low:]
