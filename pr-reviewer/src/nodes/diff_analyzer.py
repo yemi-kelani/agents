@@ -104,6 +104,41 @@ def chunk_diff(
     return segments, False
 
 
+def diff_stats(diff: str) -> dict[str, tuple[int, int]]:
+    """Lines added and removed per file, read back out of the unified diff.
+
+    Parsed from the diff already in hand rather than by running `git diff
+    --numstat` again: one less subprocess, and one less way for the log line to
+    disagree with the text actually being reviewed.
+    """
+    files: dict[str, tuple[int, int]] = {}
+    path = None
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            # "diff --git a/<old> b/<new>" — the b-side is the path after a
+            # rename, which is the one a reviewer will recognize.
+            path = line.split(" b/", 1)[-1]
+            files.setdefault(path, (0, 0))
+        elif path is None:
+            continue
+        elif line.startswith("+") and not line.startswith("+++"):
+            added, removed = files[path]
+            files[path] = (added + 1, removed)
+        elif line.startswith("-") and not line.startswith("---"):
+            added, removed = files[path]
+            files[path] = (added, removed + 1)
+    return files
+
+
+def format_stats(files: dict[str, tuple[int, int]], limit: int = 20) -> str:
+    """The per-file breakdown as one log line, capped so a huge PR stays readable."""
+    shown = list(files.items())[:limit]
+    rendered = ", ".join(f"{p} +{a}/-{r}" for p, (a, r) in shown)
+    if len(files) > limit:
+        rendered += f", and {len(files) - limit} more"
+    return rendered
+
+
 async def summarize_segments(llm: BaseChatModel, segments: list[str]) -> str:
     """Summarize every segment, then amalgamate the results into one summary.
 
@@ -167,10 +202,18 @@ def create_diff_analyzer_node(llm: BaseChatModel):
             # `should_review` gates on this, so reaching here means the graph is miswired.
             raise DiffError(f"Nothing to diff: base ('{base}'), head ('{head}')")
 
+        # The revisions, not the branch names: when BASE_SHA/HEAD_SHA are set
+        # they win, and a log line naming the branches would describe a diff
+        # that was never taken.
+        logger.info(f"Diffing {base}...{head} (branch '{branch}' onto '{target_branch}')")
+
         diff = get_diff(base=base, head=head)
         if not diff.strip():
-            logger.info(f"No changes on '{branch}' against '{target_branch}'")
+            logger.info(f"No changes between {base} and {head}; nothing to review")
             return {"diff_summary": ""}
+
+        files = diff_stats(diff)
+        logger.info(f"Diff touches {len(files)} file(s): {format_stats(files)}")
 
         segments, truncated = chunk_diff(diff)
         logger.info(f"Diff is {len(diff)} characters, split into {len(segments)} segment(s)")

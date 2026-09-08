@@ -47,15 +47,25 @@ def publish(critiques: list[Critique], s: Settings) -> int:
         logger.exception("Could not post the review")
         return EXIT_FAILED
 
-    logger.info(f"Posted {len(critiques)} critique(s) to {pr.repository}#{pr.number}")
+    logger.info(
+        f"Posted {len(critiques)} critique(s) to {pr.repository}#{pr.number}. "
+        f"This run is now recorded, so further pushes are skipped once "
+        f"max_reviews_per_pr is reached.")
     return EXIT_OK
 
 
 async def main() -> int:
     s = settings()
+    target = s.pull_request()
     logger.info(
         f"Reviewing '{s.branch}' against '{s.target_branch}' "
         f"with cli '{s.review_cli}' in {s.repo_path}")
+    # Stated up front: these decide whether the run can post at all, and a demo
+    # should not have to infer them from a failure three minutes later.
+    logger.info(
+        f"Target: {target.repository + '#' + str(target.number) if target else 'none'} | "
+        f"max reviews per PR: {s.max_reviews_per_pr if s.max_reviews_per_pr is not None else 'unlimited'} | "
+        f"model: {s.llm_model_name} | budget: {MAX_RUNTIME_SECONDS}s")
 
     try:
         graph = Agent(cli=s.review_cli, repo_path=s.repo_path).create_graph()

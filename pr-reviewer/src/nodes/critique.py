@@ -72,6 +72,14 @@ def create_critique_node(llm: BaseChatModel, cli: str, repo_path: str):
 
         findings = await extract_critiques(llm, review)
         logger.info(f"Review produced {len(findings)} critique(s)")
+        for finding in findings:
+            # The findings themselves, not just how many: the posted comment is
+            # the deliverable, but the log is the only record when posting is
+            # skipped or fails.
+            where = finding["file"]
+            if finding.get("line") is not None:
+                where += f":{finding['line']}"
+            logger.info(f"  [{finding['severity']}] {where} — {finding['issue']}")
         return {"critiques": [Critique(**finding) for finding in findings]}
 
     return critique

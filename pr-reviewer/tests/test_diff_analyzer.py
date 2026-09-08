@@ -9,6 +9,8 @@ from nodes.diff_analyzer import (
     MAX_SEGMENTS,
     DiffError,
     chunk_diff,
+    diff_stats,
+    format_stats,
     summarize_segments,
 )
 
@@ -92,3 +94,46 @@ class TestSummarizeSegments:
         summary = asyncio.run(summarize_segments(_FakeModel(), ["a", "b"]))
         assert "## Segment 1 of 2" in summary
         assert "## Segment 2 of 2" in summary
+
+
+class TestDiffStats:
+    """The per-file breakdown that explains, in the log, what was reviewed.
+
+    A run that reports "no problems" is indistinguishable from a run that was
+    handed the wrong diff unless the log says which files it actually saw.
+    """
+
+    DIFF = (
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n+++ b/a.py\n"
+        "@@ -1,2 +1,3 @@\n context\n+added one\n+added two\n-removed one\n"
+        "diff --git a/b.py b/b.py\n"
+        "--- a/b.py\n+++ b/b.py\n"
+        "@@ -1 +1 @@\n-gone\n"
+    )
+
+    def test_counts_additions_and_removals_per_file(self):
+        assert diff_stats(self.DIFF) == {"a.py": (2, 1), "b.py": (0, 1)}
+
+    def test_the_file_header_lines_are_not_counted_as_changes(self):
+        """`+++`/`---` start with + and -, and would inflate every file by one."""
+        assert diff_stats(self.DIFF)["b.py"] == (0, 1)
+
+    def test_an_empty_diff_has_no_files(self):
+        assert diff_stats("") == {}
+
+    def test_a_rename_is_reported_under_its_new_path(self):
+        renamed = (
+            "diff --git a/old.py b/new.py\n"
+            "similarity index 90%\nrename from old.py\nrename to new.py\n"
+        )
+        assert list(diff_stats(renamed)) == ["new.py"]
+
+    def test_the_summary_is_capped_for_a_large_diff(self):
+        files = {f"f{i}.py": (1, 1) for i in range(30)}
+        rendered = format_stats(files, limit=5)
+        assert rendered.count("+1/-1") == 5
+        assert "and 25 more" in rendered
+
+    def test_the_summary_names_paths_and_counts(self):
+        assert format_stats({"a.py": (2, 1)}) == "a.py +2/-1"

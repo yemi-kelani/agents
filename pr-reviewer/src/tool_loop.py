@@ -163,7 +163,7 @@ async def run_tool_loop(
             except ValueError:
                 return final
 
-        logger.info(f"Step {step_number}: calling {step.get('tool')!r}")
+        logger.info(f"Step {step_number} of {max_steps}: calling {step.get('tool')!r}")
         try:
             # FIX: the tool call sits inside the deadline too. Bounding only the
             # model turns let a run overshoot `max_seconds` by the full cost of
@@ -174,6 +174,7 @@ async def run_tool_loop(
             return _last_answer(history)
 
         result, dropped = trim_text(called, max_tokens=MAX_RESULT_TOKENS)
+        logger.info(f"Step {step_number} returned {len(result)} characters")
         if dropped:
             result += f"\n\n[trimmed {len(dropped)} characters]"
 
