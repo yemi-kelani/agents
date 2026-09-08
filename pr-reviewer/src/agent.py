@@ -30,6 +30,11 @@ SHOULD_REVIEW = "should_review"
 class State(TypedDict):
     messages: Annotated[List, add_messages]
 
+    # A diff supplied by the caller. When empty the analyzer resolves one from
+    # git, which is what CI does; the terminal client sets it so the same graph
+    # can review a pull request it has no local checkout of.
+    diff: str
+
     diff_summary: str
 
     critiques: Annotated[list[Critique], add]
@@ -109,8 +114,14 @@ class Agent:
         """Continue to the review, or stop, based on what `should_review` recorded."""
         return END if state.get("skipped") else DIFF_ANALYZER
 
-    def create_graph(self) -> CompiledStateGraph:
+    def create_graph(self, gated: bool = True) -> CompiledStateGraph:
+        """Compile the review graph.
 
+        `gated` runs the should-review check first, which exists to stop a
+        second comment landing on a pull request that already has one. A client
+        that only prints findings has nothing to double-post, so it skips
+        straight to the review.
+        """
         workflow: StateGraph = StateGraph(state_schema=State)
 
         workflow.add_node(SHOULD_REVIEW, self.should_review)
@@ -120,14 +131,18 @@ class Agent:
             create_critique_node(llm=self.llm, cli=self.cli, repo_path=self.repo_path),
         )
 
-        workflow.add_edge(START, SHOULD_REVIEW)
-        # The destinations are listed explicitly: without them the graph has no
-        # static edges to draw or validate, since `route` is opaque to LangGraph.
-        workflow.add_conditional_edges(
-            source=SHOULD_REVIEW,
-            path=self.route,
-            path_map=[DIFF_ANALYZER, END],
-        )
+        if gated:
+            workflow.add_edge(START, SHOULD_REVIEW)
+            # The destinations are listed explicitly: without them the graph has
+            # no static edges to draw or validate, since `route` is opaque to
+            # LangGraph.
+            workflow.add_conditional_edges(
+                source=SHOULD_REVIEW,
+                path=self.route,
+                path_map=[DIFF_ANALYZER, END],
+            )
+        else:
+            workflow.add_edge(START, DIFF_ANALYZER)
         workflow.add_edge(DIFF_ANALYZER, CRITIQUE)
         workflow.add_edge(CRITIQUE, END)
 

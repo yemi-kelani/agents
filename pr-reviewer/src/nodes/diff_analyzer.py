@@ -193,23 +193,30 @@ def create_diff_analyzer_node(llm: BaseChatModel):
         branch = state.get("branch")
         target_branch = state.get("target_branch")
 
-        # Prefer the exact commits. Branch names only resolve when both sides
-        # live in this repository, which is not true of a fork's head branch.
-        s = settings()
-        base = s.base_sha or (f"origin/{target_branch}" if target_branch else None)
-        head = s.head_sha or (f"origin/{branch}" if branch else None)
-        if not base or not head:
-            # `should_review` gates on this, so reaching here means the graph is miswired.
-            raise DiffError(f"Nothing to diff: base ('{base}'), head ('{head}')")
+        diff = state.get("diff") or ""
+        if diff:
+            # Supplied by the caller — a pull request fetched over the API, or a
+            # saved file. No local checkout is involved.
+            logger.info(f"Reviewing a diff supplied by the caller")
+        else:
+            # Prefer the exact commits. Branch names only resolve when both sides
+            # live in this repository, which is not true of a fork's head branch.
+            s = settings()
+            base = s.base_sha or (f"origin/{target_branch}" if target_branch else None)
+            head = s.head_sha or (f"origin/{branch}" if branch else None)
+            if not base or not head:
+                # `should_review` gates on this, so reaching here means the graph
+                # is miswired.
+                raise DiffError(f"Nothing to diff: base ('{base}'), head ('{head}')")
 
-        # The revisions, not the branch names: when BASE_SHA/HEAD_SHA are set
-        # they win, and a log line naming the branches would describe a diff
-        # that was never taken.
-        logger.info(f"Diffing {base}...{head} (branch '{branch}' onto '{target_branch}')")
+            # The revisions, not the branch names: when BASE_SHA/HEAD_SHA are set
+            # they win, and a log line naming the branches would describe a diff
+            # that was never taken.
+            logger.info(f"Diffing {base}...{head} (branch '{branch}' onto '{target_branch}')")
+            diff = get_diff(base=base, head=head)
 
-        diff = get_diff(base=base, head=head)
         if not diff.strip():
-            logger.info(f"No changes between {base} and {head}; nothing to review")
+            logger.info("Nothing to review: the diff is empty")
             return {"diff_summary": ""}
 
         files = diff_stats(diff)

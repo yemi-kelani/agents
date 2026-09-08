@@ -140,7 +140,7 @@ class TestRetry:
         attempts = []
         slept = []
 
-        def flaky(method, url, token, payload):
+        def flaky(method, url, token, payload, accept=None):
             attempts.append(1)
             if len(attempts) < 3:
                 raise self._http_error(500)

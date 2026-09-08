@@ -19,6 +19,11 @@ logger = get_logger(__name__)
 API_ROOT = "https://api.github.com"
 PER_PAGE = 100
 
+# GitHub serves a pull request as JSON metadata or as the unified diff itself,
+# chosen by the Accept header.
+ACCEPT_JSON = "application/vnd.github+json"
+ACCEPT_DIFF = "application/vnd.github.v3.diff"
+
 # urlopen has no timeout by default, so a hung connection would block until the
 # CI job itself is killed — and the pagination loop below gives it several
 # chances to happen.
@@ -97,7 +102,7 @@ def _is_transient(exc: Exception) -> bool:
     return isinstance(exc, urllib.error.URLError)
 
 
-def _send(method: str, url: str, token: str, payload=None):
+def _send(method: str, url: str, token: str, payload=None, accept: str = ACCEPT_JSON):
     """One authenticated request, decoded. No retry — see `_request`."""
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
@@ -106,7 +111,7 @@ def _send(method: str, url: str, token: str, payload=None):
         method=method,
         headers={
             "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
+            "Accept": accept,
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json",
             "User-Agent": "pr-reviewer",
@@ -114,10 +119,13 @@ def _send(method: str, url: str, token: str, payload=None):
     )
     with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as response:
         body = response.read()
+    if accept != ACCEPT_JSON:
+        return body.decode("utf-8", errors="replace")
     return json.loads(body) if body else None
 
 
-def _request(method: str, url: str, token: str, payload=None, sleep=time.sleep):
+def _request(method: str, url: str, token: str, payload=None, sleep=time.sleep,
+             accept: str = ACCEPT_JSON):
     """Send one request, retrying the failures GitHub says are worth retrying.
 
     Raises `GitHubUnavailable` when a transient failure survives every attempt,
@@ -125,7 +133,7 @@ def _request(method: str, url: str, token: str, payload=None, sleep=time.sleep):
     """
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            return _send(method, url, token, payload)
+            return _send(method, url, token, payload, accept)
         except Exception as exc:
             if not _is_transient(exc) or attempt == MAX_ATTEMPTS:
                 if _is_transient(exc):
@@ -181,6 +189,29 @@ def count_agent_reviews(pr: PullRequest, token: str, request=_request) -> int:
         if len(reviews) < PER_PAGE:
             return count
         page += 1
+
+
+def pull_request_diff(pr: PullRequest, token: str, request=_request) -> str:
+    """The unified diff for `pr`, as GitHub computes it.
+
+    Used by the terminal client, which reviews pull requests it has no local
+    checkout of. GitHub returns the diff against the merge base, matching the
+    three-dot diff CI takes locally.
+    """
+    url = f"{API_ROOT}/repos/{pr.repository}/pulls/{pr.number}"
+    try:
+        diff = request("GET", url, token, None, accept=ACCEPT_DIFF)
+    except GitHubError:
+        raise
+    except Exception as exc:
+        raise GitHubError(
+            f"Could not fetch the diff for {pr.repository}#{pr.number}") from exc
+
+    if not isinstance(diff, str):
+        raise GitHubError(
+            f"Expected a diff for {pr.repository}#{pr.number}, "
+            f"got {type(diff).__name__}")
+    return diff
 
 
 def post_review(pr: PullRequest, body: str, token: str, request=_request) -> None:
