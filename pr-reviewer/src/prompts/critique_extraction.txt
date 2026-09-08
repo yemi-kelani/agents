@@ -11,7 +11,14 @@ For each finding, on its own lines:
   DETAIL: <what breaks and under what conditions>
 
 If a field is not stated in the review, write "unknown" rather than inferring
-one. If the review reports no problems, output nothing at all.
+one.
+
+If the review reports no problems, reply with exactly:
+
+  {no_findings}
+
+Never reply with an empty message. Silence is indistinguishable from the CLI
+having failed, and is treated as an error rather than as a clean review.
 
 --- REVIEW ---
 {review}

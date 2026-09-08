@@ -1,15 +1,3 @@
-"""
-=============================================================================
-INTENTIONALLY FLAWED — TEST FIXTURE ONLY. DO NOT IMPORT, RUN, OR COPY.
-=============================================================================
-
-This file exists to give the PR reviewer something real to find. Every defect
-in it is deliberate. It is not wired into anything and nothing imports it.
-
-Do not "fix" this file. If it ever stops containing bugs it stops being useful.
-=============================================================================
-"""
-
 import asyncio
 import json
 
