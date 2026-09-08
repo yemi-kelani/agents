@@ -109,3 +109,25 @@ class TestBudgets:
 
         assert elapsed < 3.0, f"budget not enforced: took {elapsed:.1f}s"
         assert result  # degraded, but still an answer
+
+
+class TestDeadline:
+    """`max_seconds` has to bound the whole loop, not just the model turns.
+
+    Bounding only `ainvoke` let a run overshoot by the full cost of every tool
+    call it made along the way — the outer budget was the sum of the model
+    timeouts, with the tool timeouts stacked invisibly on top.
+    """
+
+    def test_a_slow_tool_cannot_outlive_the_budget(self):
+        async def slow(**kwargs):
+            """A tool that takes longer than the loop has left."""
+            await asyncio.sleep(10)
+            return "never"
+
+        model = _ScriptedModel('{"tool": "slow", "args": {}}')
+        started = time.monotonic()
+        answer = _run(model, tools={"slow": slow}, max_seconds=0.1)
+
+        assert time.monotonic() - started < 5
+        assert isinstance(answer, str) and answer

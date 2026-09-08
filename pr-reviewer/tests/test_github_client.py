@@ -4,8 +4,12 @@ Everything drives the `request=` seam the module already exposes, so no HTTP
 happens and no response shape is invented beyond what the API documents.
 """
 
+import email.message
+import urllib.error
+
 import pytest
 
+import github_client
 from github_client import (
     MARKER,
     GitHubError,
@@ -114,3 +118,81 @@ class TestPostReview:
         counted = count_agent_reviews(
             PR, token="tok", request=_responder([{"body": posted["body"]}]))
         assert counted == 1
+
+
+class TestRetry:
+    """Transient failures are retried; statements about our request are not.
+
+    GitHub's REST guidance is to back off on 5xx and rate limits, honouring
+    `retry-after` and `x-ratelimit-reset`. Retrying a 404 or a 422 only wastes
+    the budget, since repeating the request verbatim cannot change the answer.
+    """
+
+    def _http_error(self, code, headers=None):
+        """A real HTTPError, headers and all — `_retry_after` reads them."""
+        hdrs = email.message.Message()
+        for name, value in (headers or {}).items():
+            hdrs[name] = value
+        return urllib.error.HTTPError(
+            "https://api.github.com/x", code, "boom", hdrs, None)
+
+    def test_a_transient_failure_is_retried_and_can_succeed(self, monkeypatch):
+        attempts = []
+        slept = []
+
+        def flaky(method, url, token, payload):
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise self._http_error(500)
+            return [{"body": "ok"}]
+
+        monkeypatch.setattr(github_client, "_send", flaky)
+        result = github_client._request("GET", "u", "tok", sleep=slept.append)
+
+        assert result == [{"body": "ok"}]
+        assert len(attempts) == 3
+        assert len(slept) == 2
+
+    def test_a_persistent_transient_failure_is_distinguishable(self, monkeypatch):
+        monkeypatch.setattr(
+            github_client, "_send",
+            lambda *a, **k: (_ for _ in ()).throw(self._http_error(503)))
+
+        with pytest.raises(github_client.GitHubUnavailable):
+            github_client._request("GET", "u", "tok", sleep=lambda _: None)
+
+    def test_a_permanent_failure_is_not_retried(self, monkeypatch):
+        attempts = []
+
+        def denied(*args, **kwargs):
+            attempts.append(1)
+            raise self._http_error(404)
+
+        monkeypatch.setattr(github_client, "_send", denied)
+        with pytest.raises(urllib.error.HTTPError):
+            github_client._request("GET", "u", "tok", sleep=lambda _: None)
+        assert len(attempts) == 1
+
+    def test_retry_after_is_honoured(self, monkeypatch):
+        slept = []
+        attempts = []
+
+        def limited(*args, **kwargs):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise self._http_error(403, {"retry-after": "7"})
+            return []
+
+        monkeypatch.setattr(github_client, "_send", limited)
+        github_client._request("GET", "u", "tok", sleep=slept.append)
+        assert slept == [7.0]
+
+    def test_a_plain_403_is_a_permission_denial_not_a_rate_limit(self, monkeypatch):
+        """Only a 403 carrying retry guidance is a secondary rate limit. A bare
+        one means the token cannot do this, and repeating it will not help."""
+        monkeypatch.setattr(
+            github_client, "_send",
+            lambda *a, **k: (_ for _ in ()).throw(self._http_error(403)))
+
+        with pytest.raises(urllib.error.HTTPError):
+            github_client._request("POST", "u", "tok", sleep=lambda _: None)

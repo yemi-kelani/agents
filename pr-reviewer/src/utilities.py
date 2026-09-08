@@ -25,10 +25,6 @@ _SECRET = re.compile(
     r"|github_pat_[A-Za-z0-9_]{20,}"
 )
 
-_TRUE = {"1", "true", "t", "yes", "y", "on"}
-_FALSE = {"0", "false", "f", "no", "n", "off"}
-
-
 def parse_int(value, default: int | None = None) -> int | None:
     """Coerce an env value to int, falling back to `default` when it isn't one."""
     if value is None:
@@ -38,21 +34,6 @@ def parse_int(value, default: int | None = None) -> int | None:
     except (TypeError, ValueError):
         logger.error("Could not parse %r as an integer; using %r", value, default)
         return default
-
-
-def parse_boolean(value, default: bool | None = None) -> bool | None:
-    """Coerce an env value to bool, falling back to `default` when it isn't one."""
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    normalized = str(value).strip().lower()
-    if normalized in _TRUE:
-        return True
-    if normalized in _FALSE:
-        return False
-    logger.error("Could not parse %r as a boolean; using %r", value, default)
-    return default
 
 
 def scrub(s: str) -> str:
@@ -113,7 +94,7 @@ def trim_text(text: str, max_tokens: int = 50_000) -> tuple[str, str]:
     s = text
 
     if not isinstance(text, str):
-        logger.warning(f"'trim_text' method recieved text input with type '{type(text)}' instead of str.")
+        logger.warning(f"trim_text received {type(text).__name__} instead of str")
         s = str(text)
 
     len_text: int = len(s)

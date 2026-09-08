@@ -1,22 +1,25 @@
 """Graph routing and the skip-reason the exit code depends on."""
 
 import asyncio
+import dataclasses
 
 import agent as agent_module
 import pytest
-from agent import SKIPPED_ALREADY_REVIEWED, SKIPPED_MISCONFIGURED, Agent
-from github_client import GitHubError
+from agent import (
+    SKIPPED_ALREADY_REVIEWED, SKIPPED_MISCONFIGURED, SKIPPED_UNAVAILABLE, Agent)
+from github_client import GitHubError, GitHubUnavailable
 from langgraph.graph import END
 from settings import Settings
 
 
+_BASE = Settings(
+    github_token="tok", github_repository="owner/repo", pr_number=7,
+    base_sha="aaa", head_sha="bbb", max_reviews_per_pr=1,
+)
+
+
 def _settings(**overrides) -> Settings:
-    values = dict(
-        github_token="tok", github_repository="owner/repo", pr_number=7,
-        base_sha="aaa", head_sha="bbb", max_reviews_per_pr=1,
-    )
-    values.update(overrides)
-    return Settings(**values)
+    return dataclasses.replace(_BASE, **overrides)
 
 
 @pytest.fixture
@@ -99,3 +102,20 @@ def test_the_skip_reason_survives_into_the_result(monkeypatch):
 
     assert result["skipped"] == SKIPPED_MISCONFIGURED
     assert result["critiques"] == []
+
+
+class TestUnavailableGitHub:
+    """An unreachable GitHub is neither a clean review nor a wiring fault.
+
+    Reporting it as misconfiguration sent the maintainer looking for a broken
+    setting when nothing was wrong with theirs, and the job was simply worth
+    retrying.
+    """
+
+    def test_a_transient_failure_is_its_own_skip_reason(self, gate):
+        result = gate(_settings(), raises=GitHubUnavailable("503"))
+        assert result["skipped"] == SKIPPED_UNAVAILABLE
+
+    def test_an_unusable_response_is_still_misconfiguration(self, gate):
+        result = gate(_settings(), raises=GitHubError("bad body"))
+        assert result["skipped"] == SKIPPED_MISCONFIGURED

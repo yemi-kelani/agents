@@ -26,6 +26,12 @@ MAX_SEGMENTS = 12
 
 # Transient CLI failures (a dropped connection, a rate limit) are worth retrying;
 # a missing binary or absent key is not, but those fail every attempt anyway.
+#
+# This multiplies into the wall clock and must stay inside `MAX_RUNTIME_SECONDS`:
+# the worst case is `ceil(MAX_SEGMENTS / MAX_CONCURRENCY)` waves, each up to
+# `SEGMENT_ATTEMPTS x ShellChatModel.timeout`. Raising any of the three without
+# checking that product is how a run gets killed by the harness instead of
+# reporting its own failure.
 SEGMENT_ATTEMPTS = 3
 
 

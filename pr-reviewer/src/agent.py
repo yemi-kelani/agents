@@ -1,4 +1,4 @@
-from github_client import GitHubError, PullRequest, count_agent_reviews
+from github_client import GitHubError, GitHubUnavailable, count_agent_reviews
 from llm import get_model
 from log import get_logger
 from models import Critique
@@ -9,9 +9,7 @@ from nodes.diff_analyzer import DIFF_ANALYZER, create_diff_analyzer_node
 from typing import Annotated, List, TypedDict
 
 from operator import add
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import add_messages
-from langgraph.graph.state import CompiledStateGraph
 from langgraph.graph.state import StateGraph, START, END, CompiledStateGraph
 
 logger = get_logger(__name__)
@@ -22,6 +20,9 @@ logger = get_logger(__name__)
 # that legitimately had nothing to do — from the outside they look identical.
 SKIPPED_MISCONFIGURED = "misconfigured"
 SKIPPED_ALREADY_REVIEWED = "already_reviewed"
+# GitHub itself was unreachable. Neither a clean review nor a wiring fault: the
+# job is worth retrying as-is, which is a different exit code from both.
+SKIPPED_UNAVAILABLE = "github_unavailable"
 
 SHOULD_REVIEW = "should_review"
 
@@ -76,17 +77,18 @@ class Agent:
         if s.max_reviews_per_pr is None:
             return {"skipped": None}
 
-        if not s.github_token or not s.github_repository or s.pr_number is None:
-            logger.error(
-                "Cannot check for existing reviews. "
-                f"repository: '{s.github_repository}', pr_number: {s.pr_number}, "
-                f"token: {'set' if s.github_token else 'missing'}"
-            )
+        pr = s.pull_request()
+        if pr is None:
+            logger.error(f"Cannot check for existing reviews. {s.github_config_error()}")
             return self._skip(SKIPPED_MISCONFIGURED)
 
-        pr = PullRequest(repository=s.github_repository, number=s.pr_number)
         try:
-            reviewed = count_agent_reviews(pr, token=s.github_token)
+            reviewed = count_agent_reviews(pr, token=s.github_token or "")
+        except GitHubUnavailable:
+            # FIX: a 5xx or a rate limit used to be reported as misconfiguration,
+            # sending the maintainer to look for a wiring bug that is not there.
+            logger.exception("GitHub was unreachable while counting existing reviews")
+            return self._skip(SKIPPED_UNAVAILABLE)
         except GitHubError:
             # Better to stay quiet than to risk piling duplicate reviews onto a
             # PR because we could not read what we had already posted.
@@ -129,4 +131,6 @@ class Agent:
         workflow.add_edge(DIFF_ANALYZER, CRITIQUE)
         workflow.add_edge(CRITIQUE, END)
 
-        return workflow.compile(checkpointer=InMemorySaver())
+        # No checkpointer: the process reviews one PR and exits, so there is no
+        # later run for an in-memory checkpoint to be resumed from.
+        return workflow.compile()

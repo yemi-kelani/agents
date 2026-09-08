@@ -96,6 +96,13 @@ async def run_tool_loop(
     ]
     deadline = time.monotonic() + max_seconds
 
+    def remaining() -> float:
+        """Whatever is left of the budget. Raises when it is spent."""
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise asyncio.TimeoutError
+        return left
+
     async def ask() -> str:
         """One model turn, bounded by whatever remains of the budget.
 
@@ -104,10 +111,7 @@ async def run_tool_loop(
         could take several times the budget. Bounding the await is what makes the
         limit real.
         """
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise asyncio.TimeoutError
-        return str((await asyncio.wait_for(model.ainvoke(history), timeout=remaining)).content)
+        return str((await asyncio.wait_for(model.ainvoke(history), timeout=remaining())).content)
 
     for step_number in range(1, max_steps + 1):
         last_step = step_number == max_steps or time.monotonic() >= deadline
@@ -160,7 +164,16 @@ async def run_tool_loop(
                 return final
 
         logger.info(f"Step {step_number}: calling {step.get('tool')!r}")
-        result, dropped = trim_text(await _call(tools, step), max_tokens=MAX_RESULT_TOKENS)
+        try:
+            # FIX: the tool call sits inside the deadline too. Bounding only the
+            # model turns let a run overshoot `max_seconds` by the full cost of
+            # every tool call it made along the way.
+            called = await asyncio.wait_for(_call(tools, step), timeout=remaining())
+        except asyncio.TimeoutError:
+            logger.warning(f"Ran out of time running {step.get('tool')!r}; using what we have")
+            return _last_answer(history)
+
+        result, dropped = trim_text(called, max_tokens=MAX_RESULT_TOKENS)
         if dropped:
             result += f"\n\n[trimmed {len(dropped)} characters]"
 

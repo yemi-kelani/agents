@@ -102,3 +102,44 @@ class TestFormatReview:
         one = format_review(
             [Critique(file="a.py", issue="x", detail="d", severity="high")])
         assert "1 issue." in one
+
+
+class TestReviewBodyCap:
+    """The body is the one output that reaches GitHub, and it was the one thing
+    with no size bound. An oversized body is rejected with a 422, throwing away
+    an entire completed review."""
+
+    def _many(self, count, detail_chars=2_000):
+        return [
+            Critique(file=f"f{i}.py", issue="leak", detail="x" * detail_chars,
+                     severity="high")
+            for i in range(count)
+        ]
+
+    def test_a_long_review_is_truncated_within_the_cap(self):
+        body = format_review(self._many(100), max_chars=20_000)
+        assert len(body) <= 20_000
+
+    def test_truncation_says_how_many_findings_were_dropped(self):
+        body = format_review(self._many(100), max_chars=20_000)
+        assert "further finding(s) omitted" in body
+
+    def test_the_most_severe_findings_survive_truncation(self):
+        """Ordering is by severity, so what gets dropped is what matters least."""
+        critiques = [
+            Critique(file="low.py", issue="nit", detail="y" * 5_000, severity="low"),
+            Critique(file="high.py", issue="crash", detail="z" * 5_000, severity="high"),
+        ]
+        body = format_review(critiques, max_chars=6_000)
+        assert "high.py" in body
+        assert "low.py" not in body
+
+    def test_a_short_review_is_untouched(self):
+        body = format_review(self._many(1, detail_chars=10))
+        assert "omitted" not in body
+
+    def test_a_single_oversized_finding_is_still_reported(self):
+        """Never emit a body with no findings at all: the first one is always
+        kept, so the review says something even when one finding blows the cap."""
+        body = format_review(self._many(1, detail_chars=50_000), max_chars=1_000)
+        assert "f0.py" in body

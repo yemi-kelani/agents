@@ -35,7 +35,11 @@ class ShellSpec(BaseModel):
     """How to invoke one agent CLI headlessly."""
     name: str
     argv: list[str]
-    env_key: str            # var name the CLI reads
+    # The variable name the CLI *itself* reads, which is not necessarily the one
+    # this project stores the key under. `_child_env` builds an allowlist rather
+    # than copying os.environ, so a wrong name here means the child gets no
+    # credential at all — verify it against the CLI before changing it.
+    env_key: str
     secret_attr: str        # attribute on Settings holding the key
     parse: Callable[[str], str]
     prompt_via: str = "stdin"   # "stdin" | "argv"
@@ -63,8 +67,19 @@ def build_specs() -> dict[str, ShellSpec]:
                 "--model",
                 f"{settings().llm_model_name}",
             ],
+            # The CLI reads CODEX_API_KEY, not OPENAI_API_KEY, even though the
+            # key itself is an OpenAI one and CI supplies it under the OpenAI
+            # name. Verified against 0.153.4 by probing the live binary:
+            #
+            #   CODEX_API_KEY=sk-x  -> "Incorrect API key provided: sk-x***"
+            #   OPENAI_API_KEY=sk-x -> "Missing bearer ... in header"
+            #
+            # The second is what "the CLI never received a key" looks like. Note
+            # that an `invalid_api_key` error means the opposite — the key *was*
+            # sent and rejected — so the two must not be conflated when
+            # re-checking this.
             env_key="CODEX_API_KEY",
-            secret_attr="codex_api_key",
+            secret_attr="openai_api_key",
             parse=parse_codex,
             prompt_via="argv",
             answer_file_flag="--output-last-message",
@@ -152,11 +167,16 @@ class ShellChatModel(BaseChatModel):
         # Allowlist, not os.environ.copy() — the codex process never sees the
         # bob key and vice versa.
         env = {
-            "PATH": os.environ["PATH"],
+            "PATH": os.environ.get("PATH", os.defpath),
             "HOME": home or os.environ.get("HOME", tempfile.gettempdir()),
             self.spec.env_key: key,
         }
-        for k in ("LANG", "TMPDIR", "NODE_PATH", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"):
+        # Proxy settings included: on a runner behind one, a CLI that cannot see
+        # them cannot reach the network at all, and the allowlist is what would
+        # have hidden them.
+        for k in ("LANG", "TMPDIR", "NODE_PATH", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
+                  "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+                  "http_proxy", "https_proxy", "no_proxy"):
             if k in os.environ:
                 env[k] = os.environ[k]
         if home and self.spec.name == "codex":

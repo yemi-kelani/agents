@@ -92,11 +92,44 @@ class TestGeneral:
         _env(monkeypatch, GITHUB_TOKEN="")
         assert settings().github_token is None
 
-    def test_the_openai_key_feeds_the_codex_slot(self, monkeypatch):
-        """The codex CLI reads CODEX_API_KEY, but CI supplies OPENAI_API_KEY;
-        llm.py bridges the two, so this mapping has to hold."""
+    def test_the_openai_key_is_stored_once(self, monkeypatch):
+        """One secret, one field. It was previously stored twice under two
+        names, which is what let the codex spec point at a variable the CLI
+        does not read while still finding a value in Settings."""
         _env(monkeypatch, OPENAI_API_KEY="sk-abc")
-        assert settings().codex_api_key == "sk-abc"
+        s = settings()
+        assert s.openai_api_key == "sk-abc"
+        assert not hasattr(s, "codex_api_key")
+
+
+class TestReviewCap:
+    def test_a_sentinel_means_unlimited(self, monkeypatch):
+        """The unlimited branch in `should_review` has to be reachable from the
+        environment, not only from a hand-built Settings."""
+        for value in ("none", "NONE", "unlimited", "-1"):
+            _env(monkeypatch, MAX_REVIEWS_PER_PR=value)
+            assert settings().max_reviews_per_pr is None, value
+
+    def test_zero_still_means_never_review(self, monkeypatch):
+        _env(monkeypatch, MAX_REVIEWS_PER_PR="0")
+        assert settings().max_reviews_per_pr == 0
+
+
+class TestGitHubTarget:
+    def test_a_complete_configuration_yields_a_pull_request(self, monkeypatch):
+        _env(monkeypatch, GITHUB_TOKEN="tok", GITHUB_REPOSITORY="owner/repo",
+             PR_NUMBER="7")
+        pr = settings().pull_request()
+        assert pr is not None
+        assert (pr.repository, pr.number) == ("owner/repo", 7)
+
+    def test_any_missing_piece_yields_none(self, monkeypatch):
+        for missing in ("GITHUB_TOKEN", "GITHUB_REPOSITORY", "PR_NUMBER"):
+            complete = {"GITHUB_TOKEN": "tok", "GITHUB_REPOSITORY": "owner/repo",
+                        "PR_NUMBER": "7"}
+            complete.pop(missing)
+            _env(monkeypatch, **complete)
+            assert settings().pull_request() is None, missing
 
 
 def test_pull_ref_pattern_requires_a_trailing_segment():

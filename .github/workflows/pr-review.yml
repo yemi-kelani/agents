@@ -9,6 +9,13 @@ permissions:
 
 jobs:
   review:
+    # Fork pull requests cannot be reviewed by this job and must not be failed
+    # by it. GitHub withholds secrets from a fork's `pull_request` run and
+    # downgrades GITHUB_TOKEN to read-only, so the reviewer would have no model
+    # key to call and no write access to post with — a red check on every
+    # external contribution. Skipping is the honest outcome; reviewing forks
+    # needs a `workflow_run` job that runs after this one, with the secrets.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     # Backstop: the reviewer bounds its own model calls and HTTP, but a job-level
     # limit is what guarantees a hung run cannot hold a runner for six hours.
@@ -36,9 +43,10 @@ jobs:
       - name: Run the reviewer
         working-directory: pr-reviewer/src
         env:
-          # Diffing by SHA rather than by `origin/<branch>` is what makes fork
-          # pull requests reviewable: a fork's head branch has no ref under
-          # `origin`, but its head commit is fetched and present.
+          # Diffing by SHA rather than by `origin/<branch>`: a head branch does
+          # not always have a ref under `origin`, but its head commit is fetched
+          # and present. (This alone does not make forks reviewable — see the
+          # job-level `if` above for why those are skipped outright.)
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 

@@ -5,9 +5,11 @@ clean" from "never ran" — the two were indistinguishable before.
 """
 
 import asyncio
+import dataclasses
 
 import main as main_module
-from agent import SKIPPED_ALREADY_REVIEWED, SKIPPED_MISCONFIGURED
+from agent import (
+    SKIPPED_ALREADY_REVIEWED, SKIPPED_MISCONFIGURED, SKIPPED_UNAVAILABLE)
 from github_client import GitHubError
 from main import EXIT_FAILED, EXIT_MISCONFIGURED, EXIT_OK, main, publish
 from models import Critique
@@ -16,23 +18,28 @@ from settings import Settings
 CRITIQUE = Critique(file="a.py", issue="leak", detail="d", line=3, severity="high")
 
 
+_CONFIGURED = Settings(
+    github_token="tok", github_repository="owner/repo", pr_number=7,
+    branch="feature", target_branch="main",
+)
+
+
 def _configured(**overrides) -> Settings:
-    values = dict(
-        github_token="tok", github_repository="owner/repo", pr_number=7,
-        branch="feature", target_branch="main",
-    )
-    values.update(overrides)
-    return Settings(**values)
+    return dataclasses.replace(_CONFIGURED, **overrides)
 
 
 class TestPublish:
-    def test_a_clean_review_posts_nothing_and_succeeds(self, monkeypatch):
+    def test_a_clean_review_is_posted_so_the_run_is_recorded(self, monkeypatch):
+        """Posting nothing wrote no marker, so `count_agent_reviews` never saw
+        the run: every later push paid for a full re-review, and the author
+        could not tell a clean review from one that never happened."""
         posted = []
         monkeypatch.setattr(main_module, "post_review",
                             lambda *a, **k: posted.append(a))
 
         assert publish([], _configured()) == EXIT_OK
-        assert posted == []
+        assert len(posted) == 1
+        assert posted[0][1] == "No problems found."
 
     def test_findings_are_posted_and_do_not_fail_the_build(self, monkeypatch):
         """Findings are delivered by the comment, not by a red check."""
@@ -111,3 +118,30 @@ class TestMainExitCodes:
     def test_an_unhandled_failure_is_reported_not_raised(self, monkeypatch):
         code = _run_main(monkeypatch, raises=RuntimeError("codex is not installed"))
         assert code == EXIT_FAILED
+
+    def test_an_unreachable_github_fails_rather_than_misreporting_config(self, monkeypatch):
+        """A 5xx or a rate limit used to exit 2, telling the maintainer their
+        configuration was broken when nothing was wrong with it."""
+        code = _run_main(monkeypatch, {"skipped": SKIPPED_UNAVAILABLE})
+        assert code == EXIT_FAILED
+
+    def test_a_run_that_overruns_its_budget_reports_itself(self, monkeypatch):
+        """Every phase is bounded, but those bounds multiply. Without an overall
+        deadline the harness kills the job instead, producing no exit code at
+        all — the one outcome the exit-code contract exists to prevent."""
+        class _Hang:
+            async def ainvoke(self, state, config=None):
+                await asyncio.sleep(10)
+
+        class FakeAgent:
+            def __init__(self, cli, repo_path):
+                pass
+
+            def create_graph(self):
+                return _Hang()
+
+        monkeypatch.setattr(main_module, "settings", lambda: _configured())
+        monkeypatch.setattr(main_module, "Agent", FakeAgent)
+        monkeypatch.setattr(main_module, "MAX_RUNTIME_SECONDS", 0.05)
+
+        assert asyncio.run(main()) == EXIT_FAILED
