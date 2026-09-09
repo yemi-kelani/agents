@@ -1,0 +1,15 @@
+Scope a research task.
+
+Question: {question}
+{context}
+
+Write:
+1. A brief — 2-4 sentences stating what a complete answer must cover.
+2. 3-5 topics. Each must be:
+   - independently researchable (no topic may depend on another's answer)
+   - answerable from public sources
+   - non-overlapping
+
+Prefer topics that approach the question from different angles over topics that
+restate it. If the question is contested, include a topic covering the strongest
+opposing case.

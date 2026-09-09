@@ -1,0 +1,7 @@
+Prometheus Capacity Planning
+
+Typical single-server deployments run 1-2 million active series. Beyond that,
+operators usually shard by service or federate to a long-term store.
+
+Memory use scales roughly linearly with active series. A rule of thumb is 4 KB of
+resident memory per active series.

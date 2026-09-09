@@ -1,0 +1,9 @@
+Mimir Overview
+
+Mimir is a horizontally scalable time series database. A single cluster has been
+demonstrated to scale to 1 billion active series.
+
+Mimir stores blocks in object storage such as S3 or GCS. Query latency depends on
+the number of blocks scanned rather than on the total series count.
+
+The project is licensed under AGPLv3.

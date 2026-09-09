@@ -1,0 +1,9 @@
+Notes on the 2023 citation audit
+
+The audit examined four commercial generative search engines. It found that only
+51.5% of generated statements were fully supported by their citations.
+
+Citation precision was inversely correlated with perceived utility: the reports
+that read best were the least grounded.
+
+The authors did not evaluate open-source research agents.

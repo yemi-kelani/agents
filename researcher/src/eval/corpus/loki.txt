@@ -1,0 +1,7 @@
+Loki Overview
+
+Loki indexes only the metadata labels attached to a log stream. The log content
+itself is stored compressed and is never indexed.
+
+Queries filter by label first and then grep the matching chunks. This keeps the
+index small at the cost of slower full-text style searches.

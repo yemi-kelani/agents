@@ -1,0 +1,43 @@
+# Researcher configuration.
+#
+# A section may be shadowed by a profile-suffixed twin: `models_local:` replaces
+# `models:` under `RESEARCHER_PROFILE=local`. Anything without a twin is shared,
+# which is why `search:` appears once — a local run still searches the web.
+#
+# No secrets here. API keys are read from the environment (spec 04), so this
+# file is safe to commit.
+
+models:
+  planner:     openai:gpt-5.5          # reasoning, decomposition
+  extractor:   openai:gpt-5.4          # volume, strict JSON, verbatim copying
+  verifier:    openai:gpt-5.6-sol      # careful judgment — NOT the extractor
+  synthesizer: openai:gpt-5.5          # long-form writing, instruction adherence
+
+# Same shape, zero cost. Build and debug here: a small model surfaces sloppy
+# prompts and JSON bugs faster than a frontier model, which papers over them.
+# One model in every role means the verifier judges its own extraction — the
+# run warns, because that inflates the pass rate the eval reports.
+models_local:
+  planner:     ollama:qwen3:32b
+  extractor:   ollama:qwen3:32b
+  verifier:    ollama:qwen3:32b
+  synthesizer: ollama:qwen3:32b
+
+# How much fits in ONE call, per role. Distinct from Budget.max_total_tokens,
+# which caps the whole run. Optional — omit a role to use the provider default.
+context_limits:
+  extractor:   128000
+  synthesizer: 128000
+
+context_limits_local:
+  extractor:   32000
+  synthesizer: 32000
+
+search:
+  backends: [tavily, searxng]          # ordered; first is primary
+  k: 5
+
+cache:
+  enabled: true
+  ttl_hours: 24
+  # dir: ~/.cache/researcher            # or RESEARCHER_CACHE_DIR

@@ -1,0 +1,46 @@
+[project]
+name = "researcher"
+version = "0.1.0"
+description = "Grounded research agent with mandatory claim verification"
+requires-python = ">=3.12"
+dependencies = [
+    "langgraph>=1.0",
+    "langchain>=1.0",
+    "pydantic>=2.7",
+    "httpx>=0.27",
+    "trafilatura>=2.0",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "blockbuster>=1.5",
+]
+
+[project.scripts]
+researcher-eval = "eval.run:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = [
+    "anchor", "app", "cache", "config", "content_store", "graph", "http_client",
+    "models", "progress", "render", "settings", "state", "terminal",
+    "verifiers",
+]
+packages = ["eval", "fetch", "nodes", "prompts", "search"]
+
+[tool.setuptools.package-data]
+prompts = ["*.txt"]
+eval = ["*.jsonl", "corpus/*.txt"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

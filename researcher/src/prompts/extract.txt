@@ -1,0 +1,20 @@
+Extract claims relevant to this sub-question from the source below.
+
+Sub-question: {topic}
+
+Rules:
+- Each claim is ONE atomic assertion — one thing that can be independently true
+  or false. A sentence joining two assertions with "and" is two claims.
+- Write the claim in your own words. Do not carry the source's framing.
+- Each claim carries at least one quote copied EXACTLY from the source —
+  character for character. Do not paraphrase, trim, correct a typo, or add
+  ellipses. A quote that is not in the source word for word is worse than no
+  claim at all.
+- Only extract what the source actually says. If the source does not address the
+  sub-question, return no claims. An empty answer is a correct answer.
+- Record uncertainties separately: things the source hedges on, contradicts, or
+  leaves open.
+
+Return at most {max_claims} claims. Fewer good claims beats more weak ones.
+
+{untrusted_block}

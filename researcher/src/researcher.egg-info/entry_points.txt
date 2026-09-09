@@ -1,0 +1,2 @@
+[console_scripts]
+researcher-eval = eval.run:main
