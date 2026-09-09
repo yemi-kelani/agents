@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pr-reviewer Design Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+  :root {
+    --ground: #f2f5f3;
+    --surface: #ffffff;
+    --ink: #16201e;
+    --ink-soft: #55625e;
+    --rule: #d9e0dd;
+    --accent: #0f6d62;
+    --accent-soft: #e3efec;
+    --add: #2e6f43;
+    --del: #a2402c;
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #111614;
+      --surface: #191f1d;
+      --ink: #e7edea;
+      --ink-soft: #9aa8a4;
+      --rule: #2a322f;
+      --accent: #5fbfae;
+      --accent-soft: #16302c;
+      --add: #7fbf95;
+      --del: #e08a73;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #111614;
+    --surface: #191f1d;
+    --ink: #e7edea;
+    --ink-soft: #9aa8a4;
+    --rule: #2a322f;
+    --accent: #5fbfae;
+    --accent-soft: #16302c;
+    --add: #7fbf95;
+    --del: #e08a73;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: 3.5rem 1.5rem 5rem;
+  }
+
+  /* Header */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.9rem;
+  }
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.1rem, 5vw, 3rem);
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    text-wrap: balance;
+    margin: 0 0 0.8rem;
+  }
+  .lede {
+    max-width: 40rem;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  /* Pipeline */
+  .pipeline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 2.5rem 0 0;
+    padding: 1rem 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    overflow-x: auto;
+  }
+  .node {
+    padding: 0.25rem 0.55rem;
+    background: var(--accent-soft);
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .node.term { background: transparent; color: var(--ink-soft); }
+  .arrow { color: var(--ink-soft); }
+  .pipeline .note {
+    font-family: var(--body);
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+    flex-basis: 100%;
+    margin-top: 0.35rem;
+  }
+
+  /* Groups */
+  section { margin-top: 3.25rem; }
+  h2 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.05rem;
+    letter-spacing: 0.02em;
+    margin: 0 0 0.25rem;
+  }
+  .group-note {
+    font-size: 0.95rem;
+    color: var(--ink-soft);
+    margin: 0 0 0.5rem;
+    max-width: 42rem;
+  }
+
+  /* Decisions */
+  .d {
+    display: grid;
+    grid-template-columns: 11rem 1fr;
+    gap: 0 2rem;
+    padding: 1.4rem 0;
+    border-top: 1px solid var(--rule);
+  }
+  .d:last-child { border-bottom: 1px solid var(--rule); }
+  .where {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--ink-soft);
+    padding-top: 0.3rem;
+    line-height: 1.7;
+    word-break: break-word;
+  }
+  .d h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.12rem;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.35rem;
+    text-wrap: balance;
+  }
+  .d p { margin: 0; max-width: 42rem; }
+  .cost {
+    margin-top: 0.5rem !important;
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+  }
+  .lbl {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--del);
+    margin-right: 0.5rem;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--accent-soft);
+    padding: 0.08em 0.32em;
+  }
+
+  /* Run block */
+  .run {
+    margin-top: 3.25rem;
+    padding: 1.25rem 1.4rem;
+    background: var(--surface);
+    border-left: 3px solid var(--accent);
+  }
+  .run h2 { margin-bottom: 0.6rem; }
+  .run pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.9;
+    margin: 0;
+    overflow-x: auto;
+    color: var(--ink);
+  }
+  .run .c { color: var(--ink-soft); }
+
+  footer {
+    margin-top: 2.5rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    color: var(--ink-soft);
+  }
+
+  @media (max-width: 640px) {
+    .d { grid-template-columns: 1fr; gap: 0.4rem; }
+    .where { padding-top: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">pr-reviewer</p>
+    <h1>Design decisions</h1>
+    <p class="lede">A LangGraph agent that reviews a pull request diff and posts findings to GitHub. Its model is not an API client, it is a coding CLI running as a subprocess. Fifteen choices that follow from that, and what each one costs.</p>
+  </header>
+
+  <div class="pipeline">
+    <span class="node term">START</span><span class="arrow">&rarr;</span>
+    <span class="node">should_review</span><span class="arrow">&rarr;</span>
+    <span class="node">diff_analyzer</span><span class="arrow">&rarr;</span>
+    <span class="node">critique</span><span class="arrow">&rarr;</span>
+    <span class="node term">END</span>
+    <span class="note">Two nodes behind a gate. The gate can also route straight to END, and records why.</span>
+  </div>
+
+  <section>
+    <h2>The model layer</h2>
+    <p class="group-note">Everything below follows from one choice at the bottom of the stack.</p>
+
+    <article class="d">
+      <p class="where">llm.py</p>
+      <div>
+        <h3>A CLI subprocess is the chat model</h3>
+        <p><code>ShellChatModel</code> implements LangChain's <code>BaseChatModel</code> by shelling out to <code>codex</code> or <code>bob</code>. That buys a coding agent with filesystem access for free.</p>
+        <p class="cost"><span class="lbl">Cost</span> No native tool calling, no token accounting, no conversation state. The class documents all three rather than hiding them.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">tool_loop.py</p>
+      <div>
+        <h3>The tool loop is hand written</h3>
+        <p><code>bind_tools</code> raises, so the protocol is text. The model replies with <code>{"tool": ...}</code> or <code>{"answer": ...}</code> and the loop dispatches it. A node picks the task and the tools, the loop runs the turns.</p>
+        <p class="cost"><span class="lbl">Cost</span> Prose, fences and stray objects have to be tolerated by the parser instead of by the SDK.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">tools/explore.py</p>
+      <div>
+        <h3>Exploration is one sub-agent, not four file tools</h3>
+        <p>There is no read, list or grep. There is <code>explore_codebase</code>, which spawns a second CLI in the repo and returns a digested answer.</p>
+        <p class="cost"><span class="lbl">Cost</span> Another subprocess per question, in exchange for a history that stays small. The full history is re-sent on every step.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">llm.py, parsers.py</p>
+      <div>
+        <h3>Read the file the CLI wrote, parse stdout only as a fallback</h3>
+        <p><code>--output-last-message</code> is authoritative. When parsing is unavoidable, only <code>item.completed</code> payloads count as answers.</p>
+        <p class="cost"><span class="lbl">Cost</span> A second code path to keep alive. Worth it: a top-level <code>message</code> belongs to an error event, and reading one would report a crash as the review.</p>
+      </div>
+    </article>
+  </section>
+
+  <section>
+    <h2>Control flow</h2>
+    <p class="group-note">One graph, run by CI and by a terminal, under a budget it enforces itself.</p>
+
+    <article class="d">
+      <p class="where">agent.py</p>
+      <div>
+        <h3>The review gate is a node, not a conditional edge</h3>
+        <p>State mutated inside a routing function does not reach the graph result, so the skip reason has to be returned as a state update and routed on afterwards.</p>
+        <p class="cost"><span class="lbl">Cost</span> An extra node and an explicit <code>path_map</code>, since the router is opaque to LangGraph.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">agent.py, review.py</p>
+      <div>
+        <h3>One graph, two front ends</h3>
+        <p><code>create_graph(gated=False)</code> drops the double-post check for the terminal client, which prints instead of posting and has nothing to double-post. Everything else is shared.</p>
+        <p class="cost"><span class="lbl">Cost</span> One flag whose meaning lives in a docstring rather than in the type.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">main.py, nodes/diff_analyzer.py</p>
+      <div>
+        <h3>Budgets nest, and the numbers are written down</h3>
+        <p>The process stops itself at 1500s, under the workflow's 30 minutes, because a job killed by the harness leaves no comment and no exit code. Inside it, the fan-out worst case is spelled out as segments over concurrency, times attempts, times timeout.</p>
+        <p class="cost"><span class="lbl">Cost</span> Four constants that have to be changed together.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">nodes/diff_analyzer.py</p>
+      <div>
+        <h3>Diff segments overlap and never reassemble</h3>
+        <p>Each segment repeats 1000 characters of the one before it, so a hunk landing on a boundary is readable in full somewhere. Past twelve segments the review is explicitly partial.</p>
+        <p class="cost"><span class="lbl">Cost</span> Some duplicate summarization. The prompt tells the model overlap is expected.</p>
+      </div>
+    </article>
+  </section>
+
+  <section>
+    <h2>Failure</h2>
+    <p class="group-note">The reviewer runs unattended, so every failure has to be legible from the outside.</p>
+
+    <article class="d">
+      <p class="where">tool_loop.py, nodes/diff_analyzer.py</p>
+      <div>
+        <h3>Failure is data, not an exception</h3>
+        <p>Unknown tool, bad arguments, a tool that raises, unparseable JSON, a spent budget: all come back as messages. <code>abatch(return_exceptions=True)</code> keeps eleven segment summaries when one fails.</p>
+        <p class="cost"><span class="lbl">Cost</span> Errors can be quietly absorbed, so truncation and failed segments are written into the output text.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">main.py, github_client.py</p>
+      <div>
+        <h3>Exit codes encode why, not what was found</h3>
+        <p>0 means a review ran, clean or not, because findings ship in the PR comment. 2 is misconfiguration, 1 is failure. <code>GitHubUnavailable</code> exists so "GitHub was down" (retry the job) never looks like "this is wired wrong" (fix it).</p>
+        <p class="cost"><span class="lbl">Cost</span> A second exception class and three skip reasons the graph has to carry.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">nodes/critique.py, settings.py</p>
+      <div>
+        <h3>Sentinels, never empty values</h3>
+        <p>An empty reply is how the model layer reports that the CLI died, so a clean review has to say <code>NO FINDINGS</code>. Unlimited reviews needs its own token, because an unparseable env value falls back to the default rather than to None. Secrets get <code>or None</code>, since an empty string reaches the provider as a confusing auth error.</p>
+        <p class="cost"><span class="lbl">Cost</span> Three magic values a reader has to learn.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">github_client.py, models.py</p>
+      <div>
+        <h3>An invisible marker makes reruns safe</h3>
+        <p>Every posted review carries an HTML comment that renders as nothing. That is how a later run recognizes its own work, which is why a clean review is still posted, and why counting reviews raises instead of returning a possibly wrong zero.</p>
+        <p class="cost"><span class="lbl">Cost</span> A paginated read before every review, and a 60k character cap on the body so an oversized post cannot 422 away a finished review.</p>
+      </div>
+    </article>
+  </section>
+
+  <section>
+    <h2>Boundaries</h2>
+    <p class="group-note">What each part is allowed to see, import, and print.</p>
+
+    <article class="d">
+      <p class="where">llm.py</p>
+      <div>
+        <h3>Child processes get an allowlist, not a copy of the environment</h3>
+        <p>The codex process never sees the bob key. Proxy variables are added back deliberately, because the allowlist is exactly what would otherwise cut off the network on a proxied runner.</p>
+        <p class="cost"><span class="lbl">Cost</span> Any variable a CLI needs has to be named. A wrong <code>env_key</code> means the child gets no credential at all.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">log.py, utilities.py</p>
+      <div>
+        <h3>Secrets are scrubbed on the finished log line</h3>
+        <p>Redaction happens after formatting, because keys arrive through interpolated arguments and tracebacks rather than through format strings. <code>utilities</code> takes the stdlib logger by name to avoid a cycle while still inheriting the scrubbing handler.</p>
+        <p class="cost"><span class="lbl">Cost</span> A regex that has to keep up with new token prefixes.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">parsers.py, models.py, tests/</p>
+      <div>
+        <h3>Layers are enforced by what a module may import</h3>
+        <p><code>parsers</code> returns plain dicts so it never sees graph types. <code>format_review</code> lives beside the model it formats, keeping <code>github_client</code> transport only. Types sit in <code>models</code> because a node importing the graph would be a cycle. Tests drive an injected <code>request=</code> seam instead of patching urllib.</p>
+        <p class="cost"><span class="lbl">Cost</span> Findings get built twice, once as dicts and once as models.</p>
+      </div>
+    </article>
+
+    <article class="d">
+      <p class="where">llm.py, parsers.py</p>
+      <div>
+        <h3>Comments record evidence, not intent</h3>
+        <p>The credential comment carries the probe output from CLI 0.153.4 and the two error shapes that separate "no key sent" from "key rejected". <code>parse_bob</code> is marked unverified. Several comments name the bug the current shape prevents.</p>
+        <p class="cost"><span class="lbl">Cost</span> Comments go stale against a version number, which is the point: they are checkable.</p>
+      </div>
+    </article>
+  </section>
+
+  <div class="run">
+    <h2>Run it</h2>
+    <pre><span class="c"># review a pull request, print findings, post nothing</span>
+cd pr-reviewer/src &amp;&amp; python review.py owner/repo#3
+
+<span class="c"># a local range, or a saved diff</span>
+python review.py main..HEAD
+python review.py saved.diff
+
+<span class="c"># what CI runs: reads the env, posts once, exits 0 / 1 / 2</span>
+python main.py</pre>
+  </div>
+
+  <footer>pr-reviewer/src &middot; 15 decisions &middot; tests in pr-reviewer/tests</footer>
+
+</div>
+</body>
+</html>
